@@ -1,0 +1,116 @@
+services:
+  backend:
+    image: achrafes20/backend-web:latest
+    container_name: laravel_backend
+    restart: unless-stopped
+    volumes:
+      - ./backend:/var/www
+      - ./backend/storage:/var/www/storage
+      - ./backend/bootstrap/cache:/var/www/bootstrap/cache
+    environment:
+      APP_ENV: development
+      APP_DEBUG: "true"
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_DATABASE: laravel
+      DB_USERNAME: root
+      DB_PASSWORD: secret
+      SESSION_DRIVER: cookie
+    networks:
+      - app-network
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "chown -R www-data:www-data /var/www/storage &&
+             chown -R www-data:www-data /var/www/bootstrap/cache &&
+             docker-php-entrypoint php-fpm"
+    healthcheck:
+      test: ["CMD-SHELL", "php artisan route:list || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Serveur Nginx
+  webserver:
+    image: nginx:alpine
+    container_name: nginx_server
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./backend:/var/www
+      - ./docker/nginx:/etc/nginx/conf.d
+    networks:
+      - app-network
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # Base de données MySQL
+  db:
+    image: mysql:8.0
+    container_name: mysql_db
+    restart: unless-stopped
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_DATABASE: laravel
+      MYSQL_ROOT_PASSWORD: secret
+      MYSQL_PASSWORD: secret
+      MYSQL_USER: laravel_user
+    volumes:
+      - dbdata:/var/lib/mysql
+      - ./docker/mysql:/docker-entrypoint-initdb.d
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # PHPMyAdmin
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: phpmyadmin
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+      MYSQL_ROOT_PASSWORD: secret
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  # Frontend Angular
+  frontend:
+    image: achrafes20/frontend-web:latest
+    container_name: angular_frontend
+    restart: unless-stopped
+    ports:
+      - "4200:4200"
+    volumes:
+      - ./frontend:/usr/src/app
+      - /usr/src/app/node_modules
+    environment:
+      NODE_ENV: development
+      CHOKIDAR_USEPOLLING: "true"
+      NG_CLI_ANALYTICS: "false"
+    command: sh -c "npm install && ng serve --host 0.0.0.0 --disable-host-check --poll=1000"
+    networks:
+      - app-network
+    stdin_open: true
+    tty: true
+
+# Volumes et réseaux
+volumes:
+  dbdata:
+    driver: local
+
+networks:
+  app-network:
+    driver: bridge
